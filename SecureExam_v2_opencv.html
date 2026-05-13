@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SecureExam v2 — AI Proctoring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;700&display=swap"/>
+
+<!-- ✅ MediaPipe FaceMesh loaded from official CDN — works out of the box -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+<!-- ✅ OpenCV.js — used for image preprocessing (contrast/sharpen) and face bounding-box detection -->
+<script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window._opencvReady=true;console.log('[OpenCV] Ready ✓');" crossorigin="anonymous"></script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg     :#070c14;
+  --bg2    :#0d1525;
+  --bg3    :#121d30;
+  --bg4    :#19253d;
+  --border :#1e2e48;
+  --accent :#3b82f6;
+  --cyan   :#22d3ee;
+  --ok     :#4ade80;
+  --warn   :#fbbf24;
+  --danger :#f87171;
+  --text   :#e2e8f0;
+  --muted  :#5a7299;
+  --font   :'Space Grotesk',system-ui,sans-serif;
+  --mono   :'Fira Code',monospace;
+  --r      :10px;
+}
+
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;overflow:hidden}
+*{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+
+/* ── SCREENS ─── */
+.screen{display:none;width:100vw;height:100vh}
+.screen.active{display:flex}
+
+/* ══ SETUP ══ */
+#setup-screen{
+  align-items:center;justify-content:center;
+  background:radial-gradient(ellipse 80% 70% at 60% 30%,#0c1e40 0%,#070c14 70%);
+}
+.setup-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:20px;
+  padding:44px 40px;width:520px;display:flex;flex-direction:column;gap:24px;
+  box-shadow:0 40px 100px rgba(0,0,0,.7),0 0 0 1px rgba(59,130,246,.08);
+}
+.brand{display:flex;align-items:center;gap:18px}
+.brand-icon{font-size:42px;flex-shrink:0;filter:drop-shadow(0 0 12px rgba(59,130,246,.5))}
+.brand h1{font-size:28px;font-weight:700;letter-spacing:-.6px;display:flex;align-items:center;gap:10px}
+.v2-tag{font-size:12px;background:linear-gradient(135deg,var(--accent),var(--cyan));color:#fff;padding:2px 9px;border-radius:20px;font-weight:700;letter-spacing:.5px}
+.tagline{color:var(--muted);font-size:12px;margin-top:4px;line-height:1.5}
+
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.feat{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;font-size:11px;color:var(--cyan);line-height:1.45;display:flex;flex-direction:column;align-items:center;gap:6px;transition:border-color .2s,background .2s}
+.feat:hover{border-color:var(--accent);background:var(--bg4)}
+.feat span:first-child{font-size:20px}
+
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-group label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.8px}
+.form-group input{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:12px 15px;color:var(--text);font-family:var(--font);font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s}
+.form-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+
+.btn-primary{background:linear-gradient(135deg,var(--accent) 0%,#1d4ed8 100%);color:#fff;border:none;border-radius:10px;padding:14px;font-size:15px;font-family:var(--font);font-weight:700;cursor:pointer;transition:opacity .2s,transform .12s;letter-spacing:.2px}
+.btn-primary:hover{opacity:.9}
+.btn-primary:active{transform:scale(.98)}
+.btn-secondary{background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:9px;padding:12px 22px;font-size:14px;font-family:var(--font);cursor:pointer;transition:background .2s}
+.btn-secondary:hover{background:rgba(59,130,246,.1)}
+.disclaimer{color:var(--muted);font-size:11px;line-height:1.7}
+
+/* ══ LOADING ══ */
+#loading-screen{align-items:center;justify-content:center;flex-direction:column}
+.loading-box{display:flex;flex-direction:column;align-items:center;gap:20px;width:380px;text-align:center}
+.loading-box h2{font-size:20px;font-weight:600}
+.loading-box p{color:var(--muted);font-size:13px}
+.spinner-ring{width:56px;height:56px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.progress-wrap{width:100%;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+#progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--cyan));width:0%;transition:width .4s}
+.load-detail{color:var(--muted);font-size:11px;font-family:var(--mono)}
+
+/* ══ EXAM SCREEN ══ */
+#exam-screen{flex-direction:column}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 18px;height:52px;flex-shrink:0}
+.tb-left{display:flex;align-items:center;gap:10px;font-size:13px}
+.tb-center{display:flex;align-items:center}
+.tb-right{display:flex;align-items:center;gap:10px;font-size:13px}
+.sep{color:var(--border);font-size:18px}
+.timer-wrap{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--cyan);background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:3px 18px}
+.rl{color:var(--muted)}
+.rbadge{font-size:11px;font-weight:700;letter-spacing:1px;padding:3px 11px;border-radius:12px;text-transform:uppercase}
+.rbadge.low   {background:rgba(74,222,128,.1); color:var(--ok);   border:1px solid var(--ok)}
+.rbadge.medium{background:rgba(251,191,36,.1); color:var(--warn); border:1px solid var(--warn)}
+.rbadge.high  {background:rgba(248,113,113,.1);color:var(--danger);border:1px solid var(--danger);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+.btn-end{background:rgba(248,113,113,.08);color:var(--danger);border:1px solid var(--danger);border-radius:7px;padding:5px 14px;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer;transition:background .2s}
+.btn-end:hover{background:rgba(248,113,113,.22)}
+
+.exam-body{display:grid;grid-template-columns:300px 1fr 270px;flex:1;overflow:hidden}
+
+/* cam */
+.cam-panel{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:12px;gap:10px;overflow:hidden}
+.video-wrap{position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:var(--r);overflow:hidden;border:2px solid var(--border);flex-shrink:0}
+#video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;transform:scaleX(-1)}
+.status-pills{position:absolute;top:7px;left:7px;display:flex;flex-direction:column;gap:4px}
+.pill{font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;backdrop-filter:blur(8px);white-space:nowrap}
+.pill.ok    {background:rgba(74,222,128,.2);  color:var(--ok);   border:1px solid rgba(74,222,128,.4)}
+.pill.warn  {background:rgba(251,191,36,.2);  color:var(--warn); border:1px solid rgba(251,191,36,.4)}
+.pill.danger{background:rgba(248,113,113,.2); color:var(--danger);border:1px solid rgba(248,113,113,.4)}
+.pill.dim   {background:rgba(90,114,153,.15); color:var(--muted);border:1px solid rgba(90,114,153,.3)}
+.noise-strip{position:absolute;bottom:7px;left:7px;right:7px;display:flex;align-items:center;gap:6px;background:rgba(7,12,20,.8);border-radius:6px;padding:4px 8px;backdrop-filter:blur(4px)}
+.noise-lbl{font-size:11px;color:var(--muted)}
+.noise-track{flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden}
+#noise-bar{height:100%;width:0%;background:var(--ok);transition:width .12s,background .3s;border-radius:3px}
+#noise-db{font-size:10px;color:var(--muted);font-family:var(--mono);width:42px}
+.mini-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.ms{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:9px;text-align:center}
+.ms span{display:block;font-family:var(--mono);font-size:22px;font-weight:700;color:var(--cyan);line-height:1}
+.ms small{font-size:10px;color:var(--muted);margin-top:3px;display:block}
+.advisory{background:rgba(251,191,36,.08);border:1px solid var(--warn);border-radius:8px;padding:8px 11px;font-size:11px;color:var(--warn);line-height:1.6}
+.advisory.hidden{display:none}
+
+/* questions */
+.q-panel{display:flex;flex-direction:column;padding:24px;gap:18px;overflow-y:auto;background:var(--bg)}
+.q-topbar{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;font-size:13px;color:var(--muted)}
+.topic-tag{background:rgba(34,211,238,.08);color:var(--cyan);border:1px solid rgba(34,211,238,.25);border-radius:20px;padding:2px 13px;font-size:12px}
+.q-card{background:var(--bg2);border:1px solid var(--border);border-radius:13px;padding:30px;flex:1}
+.q-text{font-size:17px;line-height:1.8;margin-bottom:26px;font-weight:500}
+.options{display:flex;flex-direction:column;gap:10px}
+.opt{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:13px 17px;color:var(--text);font-family:var(--font);font-size:14px;text-align:left;cursor:pointer;transition:border-color .18s,background .18s;display:flex;align-items:center;gap:13px}
+.opt:hover{border-color:var(--accent);background:rgba(59,130,246,.07)}
+.opt.selected{border-color:var(--accent);background:rgba(59,130,246,.13)}
+.opt-ltr{width:27px;height:27px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.opt.selected .opt-ltr{background:var(--accent)}
+.q-nav{display:flex;align-items:center;justify-content:space-between}
+.btn-nav{background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:var(--font);border-radius:9px;padding:9px 22px;cursor:pointer;font-size:13px;transition:border-color .18s}
+.btn-nav:hover{border-color:var(--accent);color:var(--accent)}
+#q-dots{display:flex;gap:6px}
+.qdot{width:10px;height:10px;border-radius:50%;background:var(--border);cursor:pointer;transition:background .2s}
+.qdot.cur {background:var(--accent)}
+.qdot.done{background:var(--ok)}
+
+/* log */
+.log-panel{background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.log-hdr{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;flex-shrink:0}
+.log-cnt{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:1px 10px;font-size:11px;font-family:var(--mono);color:var(--muted)}
+.log-body{flex:1;overflow-y:auto;padding:7px;display:flex;flex-direction:column;gap:4px}
+.log-body::-webkit-scrollbar{width:3px}
+.log-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.log-item{display:flex;gap:8px;padding:8px 10px;border-radius:7px;font-size:11px;line-height:1.5;border-left:2px solid transparent;animation:slideIn .2s ease}
+@keyframes slideIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+.log-item.info   {border-left-color:var(--cyan);  background:rgba(34,211,238,.04)}
+.log-item.warning{border-left-color:var(--warn);  background:rgba(251,191,36,.04)}
+.log-item.danger {border-left-color:var(--danger);background:rgba(248,113,113,.04)}
+.log-ico{flex-shrink:0}
+.log-msg{flex:1;color:var(--text)}
+.log-time{color:var(--muted);font-family:var(--mono);font-size:10px;white-space:nowrap;margin-top:2px}
+
+/* alert */
+.alert-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(6px)}
+.alert-overlay.hidden{display:none}
+.alert-box{background:var(--bg2);border:1px solid var(--danger);border-radius:18px;padding:38px 34px;width:390px;text-align:center;display:flex;flex-direction:column;gap:15px;box-shadow:0 0 60px rgba(248,113,113,.2);animation:pop .25s cubic-bezier(.34,1.56,.64,1)}
+@keyframes pop{from{transform:scale(.85);opacity:0}to{transform:none;opacity:1}}
+.alert-ico{font-size:54px}
+.alert-box h3{font-size:21px;font-weight:700}
+.alert-box p{color:var(--muted);font-size:14px;line-height:1.7}
+.alert-box button{background:var(--danger);color:#fff;border:none;border-radius:9px;padding:12px;font-family:var(--font);font-size:14px;font-weight:700;cursor:pointer;transition:opacity .2s}
+.alert-box button:hover{opacity:.85}
+
+/* report */
+#report-screen{align-items:center;justify-content:center;overflow-y:auto;background:radial-gradient(ellipse 80% 60% at 35% 70%,#0c1e40 0%,#070c14 70%)}
+.report-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:42px;width:660px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;gap:24px;box-shadow:0 40px 100px rgba(0,0,0,.7)}
+.report-wrap h2{font-size:24px;font-weight:700}
+.r-section{display:flex;flex-direction:column;gap:6px}
+.r-section h4{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:7px;margin-bottom:4px}
+.r-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px;border-bottom:1px solid rgba(30,46,72,.5)}
+.r-row .lbl{color:var(--muted)}
+.r-row .val{font-family:var(--mono);font-weight:600}
+.val.ok    {color:var(--ok)}
+.val.warn  {color:var(--warn)}
+.val.danger{color:var(--danger)}
+.verdict{border-radius:11px;padding:17px 22px;text-align:center;font-size:15px;font-weight:700}
+.verdict.clean   {background:rgba(74,222,128,.08); border:1px solid var(--ok);   color:var(--ok)}
+.verdict.moderate{background:rgba(251,191,36,.08); border:1px solid var(--warn); color:var(--warn)}
+.verdict.flagged {background:rgba(248,113,113,.08);border:1px solid var(--danger);color:var(--danger)}
+.mini-vlog{max-height:170px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:9px;font-size:11px;font-family:var(--mono);line-height:1.8;color:var(--muted)}
+.mini-vlog .mw{color:var(--warn)}
+.mini-vlog .md{color:var(--danger)}
+.report-actions{display:flex;gap:13px}
+
+/* error banner */
+.err-banner{background:rgba(248,113,113,.1);border:1px solid var(--danger);border-radius:9px;padding:12px 16px;font-size:12px;color:var(--danger);line-height:1.6;display:none}
+</style>
+</head>
+<body>
+
+<!-- ══ SETUP ══ -->
+<div id="setup-screen" class="screen active">
+  <div class="setup-card">
+    <div class="brand">
+      <span class="brand-icon">🛡️</span>
+      <div>
+        <h1>SecureExam <span class="v2-tag">v2</span></h1>
+        <p class="tagline">MediaPipe FaceMesh · 468 Landmarks · Iris Tracking · OpenCV.js Preprocessing</p>
+      </div>
+    </div>
+
+    <div class="feat-grid">
+      <div class="feat"><span>👁️</span><span>468-Point<br>Face Mesh</span></div>
+      <div class="feat"><span>🔬</span><span>OpenCV.js<br>Preprocessing</span></div>
+      <div class="feat"><span>📐</span><span>Head Pose<br>6-DOF</span></div>
+      <div class="feat"><span>👀</span><span>Iris Gaze<br>Tracking</span></div>
+      <div class="feat"><span>🔊</span><span>Noise<br>Monitor</span></div>
+      <div class="feat"><span>📋</span><span>Activity<br>Log</span></div>
+    </div>
+
+    <div id="err-banner" class="err-banner"></div>
+
+    <div class="form-group">
+      <label>Candidate Name</label>
+      <input type="text" id="candidate-name" placeholder="Enter your full name" autocomplete="off"/>
+    </div>
+    <div class="form-group">
+      <label>Exam ID</label>
+      <input type="text" id="exam-id" placeholder="e.g. CS101-2026" autocomplete="off"/>
+    </div>
+
+    <button class="btn-primary" onclick="startExam()">Begin Proctored Exam →</button>
+    <p class="disclaimer">By proceeding you consent to webcam and microphone monitoring for the duration of this exam. All processing is done locally in your browser using MediaPipe FaceMesh and OpenCV.js — no data is sent to any server.</p>
+  </div>
+</div>
+
+<!-- ══ LOADING ══ -->
+<div id="loading-screen" class="screen">
+  <div class="loading-box">
+    <div class="spinner-ring"></div>
+    <h2 id="load-msg">Initialising…</h2>
+    <p  id="load-sub">Please wait</p>
+    <div class="progress-wrap"><div id="progress-fill"></div></div>
+    <p  id="load-detail" class="load-detail"></p>
+  </div>
+</div>
+
+<!-- ══ EXAM SCREEN ══ -->
+<div id="exam-screen" class="screen">
+  <header class="topbar">
+    <div class="tb-left">
+      <span>🛡️</span>
+      <span id="tb-name">Candidate</span>
+      <span class="sep">|</span>
+      <span id="tb-exam">EXAM-ID</span>
+    </div>
+    <div class="tb-center">
+      <div class="timer-wrap">⏱ <span id="timer">59:00</span></div>
+    </div>
+    <div class="tb-right">
+      <span class="rl">Risk:</span>
+      <span id="risk-badge" class="rbadge low">LOW</span>
+      <button class="btn-end" onclick="endExam()">End Exam</button>
+    </div>
+  </header>
+
+  <div class="exam-body">
+    <!-- Camera -->
+    <div class="cam-panel">
+      <div class="video-wrap">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div class="status-pills">
+          <span id="pill-face" class="pill dim">⏳ Starting…</span>
+          <span id="pill-head" class="pill dim">📐 Head</span>
+          <span id="pill-gaze" class="pill dim">👀 Gaze</span>
+          <span id="pill-lm"   class="pill dim">● 0 pts</span>
+          <span id="pill-cv"   class="pill dim">🔬 OpenCV…</span>
+        </div>
+        <div class="noise-strip">
+          <span class="noise-lbl">🔊</span>
+          <div class="noise-track"><div id="noise-bar"></div></div>
+          <span id="noise-db">0 dB</span>
+        </div>
+      </div>
+      <div class="mini-stats">
+        <div class="ms"><span id="ms-faces">0</span><small>Faces</small></div>
+        <div class="ms"><span id="ms-away">0</span><small>Look-Away</small></div>
+        <div class="ms"><span id="ms-noise">0</span><small>Noise Alerts</small></div>
+        <div class="ms"><span id="ms-viol">0</span><small>Violations</small></div>
+      </div>
+      <div id="light-advisory" class="advisory hidden">
+        💡 Low light detected — please improve your lighting for best accuracy.
+      </div>
+    </div>
+
+    <!-- Questions -->
+    <div class="q-panel">
+      <div class="q-topbar">
+        <span id="q-num">Q 1 / 5</span>
+        <span id="q-topic-tag" class="topic-tag">Topic</span>
+      </div>
+      <div class="q-card">
+        <p class="q-text" id="q-text">Loading…</p>
+        <div id="options" class="options"></div>
+      </div>
+      <div class="q-nav">
+        <button class="btn-nav" onclick="prevQ()">← Prev</button>
+        <div id="q-dots"></div>
+        <button class="btn-nav" onclick="nextQ()">Next →</button>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="log-panel">
+      <div class="log-hdr">
+        <span>📋 Activity Log</span>
+        <span id="log-cnt" class="log-cnt">0</span>
+      </div>
+      <div id="log" class="log-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ALERT OVERLAY ══ -->
+<div id="alert-overlay" class="alert-overlay hidden">
+  <div class="alert-box">
+    <div id="alert-ico" class="alert-ico">⚠️</div>
+    <h3 id="alert-title">Warning</h3>
+    <p  id="alert-msg">Suspicious activity detected.</p>
+    <button onclick="dismissAlert()">Acknowledge</button>
+  </div>
+</div>
+
+<!-- ══ REPORT SCREEN ══ -->
+<div id="report-screen" class="screen">
+  <div class="report-wrap">
+    <h2>📊 Proctoring Report</h2>
+    <div id="report-body"></div>
+    <div class="report-actions">
+      <button class="btn-primary" onclick="downloadReport()">⬇ Download Report</button>
+      <button class="btn-secondary" onclick="location.reload()">New Session</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   QUESTIONS
+═══════════════════════════════════════════ */
+const QUESTIONS = [
+  {
+    topic:'Data Structures',
+    text:'Which data structure operates on the LIFO (Last-In, First-Out) principle?',
+    options:['Queue','Stack','Linked List','Binary Tree'],
+    answer:1
+  },
+  {
+    topic:'Algorithms',
+    text:'What is the worst-case time complexity of QuickSort?',
+    options:['O(n log n)','O(n²)','O(n)','O(log n)'],
+    answer:1
+  },
+  {
+    topic:'Computer Networks',
+    text:'Which OSI layer is responsible for routing packets between networks?',
+    options:['Data Link Layer','Transport Layer','Network Layer','Session Layer'],
+    answer:2
+  },
+  {
+    topic:'Operating Systems',
+    text:'Deadlock requires which four conditions to hold simultaneously?',
+    options:[
+      'Mutual exclusion, Hold & wait, No preemption, Circular wait',
+      'Paging, Segmentation, Swapping, Compaction',
+      'Scheduling, Synchronisation, Caching, Buffering',
+      'Interrupts, Exceptions, Traps, Faults'
+    ],
+    answer:0
+  },
+  {
+    topic:'Databases',
+    text:'Which normal form eliminates transitive dependencies among non-key attributes?',
+    options:['1NF','2NF','3NF','BCNF'],
+    answer:2
+  }
+];
+
+/* ═══════════════════════════════════════════
+   PROCTOR ENGINE
+   Preprocessing: OpenCV.js (convertScaleAbs + GaussianBlur unsharp-mask)
+   Face bbox:     OpenCV.js Haar cascade (secondary visual layer)
+   Face mesh:     MediaPipe FaceMesh 468 landmarks + iris (primary engine)
+═══════════════════════════════════════════ */
+const Proctor = (() => {
+  const CFG = {
+    maxNumFaces:2,
+    refineLandmarks:true,
+    minDetectionConf:0.35,
+    minTrackingConf:0.25,
+    // OpenCV preprocessing params (replaces CSS-filter approach)
+    cvAlpha:1.45,          // convertScaleAbs alpha  (contrast)
+    cvBeta:28,             // convertScaleAbs beta   (brightness)
+    cvSharpenStrength:0.6, // unsharp-mask blend weight
+    headYawLimit:0.30,
+    headPitchLimit:0.26,
+    gazeDeviationLimit:0.22,
+    noiseThresholdDb:60,
+    alertCooldownMs:9000,
+    streakNeeded:6,
+    detectionFps:10,
+  };
+
+  let faceMesh=null, video=null, overlayCanvas=null, overlayCtx=null;
+  let offCanvas=null, offCtx=null;
+  // OpenCV state
+  let cvReady=false;
+  let cvSrcMat=null, cvDstMat=null, cvBlurMat=null;
+  let cvFaceClassifier=null;   // Haar cascade (loaded lazily)
+  let lastCvBoxes=[];          // face bounding boxes from OpenCV
+  let running=false, rafId=null, lastDetTime=0;
+  let noiseLoop=null, audioCtx=null, analyser=null;
+  let callbacks={};
+  const streak={noFace:0,headTurn:0,gazeAway:0,multiFace:0};
+  const counts={lookAway:0,noFace:0,multiFace:0,noise:0,headTurn:0,talking:0};
+  const lastAlertTs={};
+  let startedAt=0;
+  const WARMUP_MS=4000;
+
+  const canAlert=key=>{const now=Date.now();if(!lastAlertTs[key]||now-lastAlertTs[key]>CFG.alertCooldownMs){lastAlertTs[key]=now;return true;}return false;};
+  const emit=(ev,data)=>{if(callbacks[ev])callbacks[ev](data);};
+  const warmingUp=()=>Date.now()-startedAt<WARMUP_MS;
+
+  // ── OpenCV initialisation ───────────────────────────────────────────
+  // Waits for the async opencv.js load, then loads the Haar XML over
+  // cv.FS (emscripten virtual filesystem) for face bounding-box detection.
+  async function initOpenCV() {
+    if (typeof cv === 'undefined' || !window._opencvReady) {
+      console.warn('[OpenCV] Not yet ready — skipping cv init');
+      return;
+    }
+    try {
+      cvReady = true;
+      emit('log',{type:'info', msg:'OpenCV.js ready — preprocessing & face-bbox active.'});
+
+      // Load Haar frontalface cascade XML from OpenCV online repo
+      const xmlUrl = 'https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml';
+      const resp = await fetch(xmlUrl);
+      if (!resp.ok) throw new Error('Haar XML fetch failed: ' + resp.status);
+      const buf = await resp.arrayBuffer();
+      const data = new Uint8Array(buf);
+      cv.FS_createDataFile('/', 'haarcascade_frontalface_default.xml', data, true, false);
+      cvFaceClassifier = new cv.CascadeClassifier();
+      cvFaceClassifier.load('haarcascade_frontalface_default.xml');
+      emit('log',{type:'info', msg:'OpenCV Haar cascade loaded — face bbox detection active.'});
+    } catch(e) {
+      console.warn('[OpenCV] Haar init failed:', e);
+      // Non-fatal: MediaPipe is still the primary engine
+      emit('log',{type:'info', msg:'OpenCV Haar not loaded (non-fatal). Preprocessing still active.'});
+    }
+  }
+
+  // ── OpenCV preprocessing ─────────────────────────────────────────────
+  // Replaces the old CSS-filter approach.
+  // Steps: drawImage → cv.Mat → convertScaleAbs (contrast+brightness)
+  //        → GaussianBlur → weighted unsharp-mask → putImageData to offCanvas
+  function preprocessWithCV() {
+    const w = video.videoWidth||640, h = video.videoHeight||480;
+    offCanvas.width=w; offCanvas.height=h;
+    offCtx.drawImage(video, 0, 0, w, h);
+
+    if (!cvReady) return offCanvas; // fallback: raw frame
+
+    try {
+      const imgData = offCtx.getImageData(0, 0, w, h);
+
+      // Build source Mat from RGBA ImageData
+      if (!cvSrcMat || cvSrcMat.cols!==w || cvSrcMat.rows!==h) {
+        if (cvSrcMat) cvSrcMat.delete();
+        if (cvDstMat) cvDstMat.delete();
+        if (cvBlurMat) cvBlurMat.delete();
+        cvSrcMat  = cv.matFromImageData(imgData);
+        cvDstMat  = new cv.Mat(h, w, cv.CV_8UC4);
+        cvBlurMat = new cv.Mat(h, w, cv.CV_8UC4);
+      } else {
+        cvSrcMat.data.set(imgData.data);
+      }
+
+      // Step 1: contrast + brightness via convertScaleAbs
+      // dst(x,y) = saturate( alpha * src(x,y) + beta )
+      cv.convertScaleAbs(cvSrcMat, cvDstMat, CFG.cvAlpha, CFG.cvBeta);
+
+      // Step 2: unsharp mask = original + strength*(original - blurred)
+      //   blur the contrast-adjusted image, then add the difference back
+      cv.GaussianBlur(cvDstMat, cvBlurMat, new cv.Size(0,0), 2.5);
+      cv.addWeighted(cvDstMat, 1+CFG.cvSharpenStrength,
+                     cvBlurMat, -CFG.cvSharpenStrength, 0, cvDstMat);
+
+      // Write result back to offCanvas so MediaPipe sees it
+      const outData = new ImageData(new Uint8ClampedArray(cvDstMat.data), w, h);
+      offCtx.putImageData(outData, 0, 0);
+
+      // Step 3 (optional): run Haar face detection at low-res for bbox overlay
+      // Run every ~10 frames to avoid perf hit (Haar is slower than MediaPipe)
+      if (cvFaceClassifier && Math.random() < 0.15) {
+        detectFaceBoxesCV(cvDstMat, w, h);
+      }
+    } catch(e) {
+      console.warn('[OpenCV] preprocess error:', e);
+    }
+    return offCanvas;
+  }
+
+  // ── OpenCV Haar face bounding boxes ──────────────────────────────────
+  // Runs on every ~7th frame; stores rects so drawOverlay can paint them.
+  function detectFaceBoxesCV(mat, w, h) {
+    try {
+      // Haar works on grayscale
+      const gray = new cv.Mat();
+      cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
+      cv.equalizeHist(gray, gray);
+
+      const faces = new cv.RectVector();
+      // detectMultiScale(image, objects, scaleFactor, minNeighbors, flags, minSize, maxSize)
+      cvFaceClassifier.detectMultiScale(gray, faces, 1.15, 4, 0,
+        new cv.Size(Math.round(w*0.12), Math.round(h*0.12)),
+        new cv.Size(w, h));
+
+      lastCvBoxes = [];
+      for (let i=0; i<faces.size(); i++) {
+        const r = faces.get(i);
+        lastCvBoxes.push({ x:r.x/w, y:r.y/h, w:r.width/w, h:r.height/h });
+      }
+      gray.delete(); faces.delete();
+    } catch(e) {
+      lastCvBoxes = [];
+    }
+  }
+
+  // Fallback CSS-filter path when OpenCV is not ready
+  function preprocess() {
+    return cvReady ? preprocessWithCV() : preprocessFallback();
+  }
+  function preprocessFallback(){
+    const w=video.videoWidth||640, h=video.videoHeight||480;
+    offCanvas.width=w; offCanvas.height=h;
+    offCtx.filter=`brightness(1.6) contrast(1.35)`;
+    offCtx.drawImage(video,0,0,w,h);
+    offCtx.filter='none';
+    return offCanvas;
+  }
+
+  function measureBrightness(){
+    const w=80,h=60;
+    const tmp=document.createElement('canvas');
+    tmp.width=w; tmp.height=h;
+    const tCtx=tmp.getContext('2d');
+    tCtx.drawImage(video,0,0,w,h);
+    const d=tCtx.getImageData(0,0,w,h).data;
+    let sum=0;
+    for(let i=0;i<d.length;i+=4) sum+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    return sum/(w*h);
+  }
+
+  function estimateHeadPose(lm){
+    const nose=lm[1],chin=lm[152],lEye=lm[33],rEye=lm[263];
+    const eyeMidX=(lEye.x+rEye.x)/2;
+    const eyeWidth=Math.abs(rEye.x-lEye.x);
+    const yaw=eyeWidth>0.001?(nose.x-eyeMidX)/eyeWidth:0;
+    const faceH=Math.abs(chin.y-lm[10].y);
+    const noseMid=(lEye.y+rEye.y)/2;
+    const pitch=faceH>0.001?((nose.y-noseMid)/faceH-0.38)*2.5:0;
+    const roll=eyeWidth>0.001?(rEye.y-lEye.y)/eyeWidth:0;
+    return{yaw,pitch,roll};
+  }
+
+  function estimateGaze(lm){
+    if(lm.length<478){
+      const lEye=lm[33],rEye=lm[263],nose=lm[1];
+      const eyeMidX=(lEye.x+rEye.x)/2;
+      return{gazeX:(nose.x-eyeMidX)*3,gazeY:0,method:'fallback'};
+    }
+    const liris=lm.slice(468,473), riris=lm.slice(473,478);
+    const lc={x:liris.reduce((s,p)=>s+p.x,0)/5, y:liris.reduce((s,p)=>s+p.y,0)/5};
+    const rc={x:riris.reduce((s,p)=>s+p.x,0)/5, y:riris.reduce((s,p)=>s+p.y,0)/5};
+    const lEyeL=lm[33],lEyeR=lm[133],rEyeL=lm[362],rEyeR=lm[263];
+    const lW=Math.abs(lEyeR.x-lEyeL.x), rW=Math.abs(rEyeR.x-rEyeL.x);
+    const lGaze=lW>0.001?(lc.x-lEyeL.x)/lW-0.5:0;
+    const rGaze=rW>0.001?(rc.x-rEyeL.x)/rW-0.5:0;
+    const gazeX=(lGaze+rGaze)/2;
+    const gazeY=(lc.y+rc.y)/2-(lm[33].y+lm[263].y)/2;
+    return{gazeX,gazeY,method:'iris'};
+  }
+
+  // Mesh connections for overlay drawing
+  const CONN=[
+    [10,338],[338,297],[297,332],[332,284],[284,251],[251,389],[389,356],[356,454],
+    [454,323],[323,361],[361,288],[288,397],[397,365],[365,379],[379,378],[378,400],
+    [400,377],[377,152],[152,148],[148,176],[176,149],[149,150],[150,136],[136,172],
+    [172,58],[58,132],[132,93],[93,234],[234,127],[127,162],[162,21],[21,54],[54,103],[103,67],[67,109],[109,10],
+    [33,7],[7,163],[163,144],[144,145],[145,153],[153,154],[154,155],[155,133],
+    [33,246],[246,161],[161,160],[160,159],[159,158],[158,157],[157,173],[173,133],
+    [362,382],[382,381],[381,380],[380,374],[374,373],[373,390],[390,249],[249,263],
+    [362,398],[398,384],[384,385],[385,386],[386,387],[387,388],[388,466],[466,263],
+    [61,185],[185,40],[40,39],[39,37],[37,0],[0,267],[267,269],[269,270],[270,409],[409,291],
+    [61,146],[146,91],[91,181],[181,84],[84,17],[17,314],[314,405],[405,321],[321,375],[375,291],
+    [1,2],[2,98],[98,97],[97,2],[2,326],[326,327],[327,2],
+  ];
+
+  function drawOverlay(mfl){
+    overlayCtx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+    const W=overlayCanvas.width, H=overlayCanvas.height;
+
+    // ── OpenCV Haar face bounding boxes (drawn first, behind MediaPipe mesh)
+    if(lastCvBoxes.length>0){
+      overlayCtx.save();
+      overlayCtx.strokeStyle='rgba(251,191,36,0.75)';
+      overlayCtx.lineWidth=2;
+      overlayCtx.setLineDash([5,4]);
+      overlayCtx.font='bold 10px monospace';
+      overlayCtx.fillStyle='rgba(251,191,36,0.85)';
+      lastCvBoxes.forEach((b,i)=>{
+        const bx=b.x*W, by=b.y*H, bw=b.w*W, bh=b.h*H;
+        overlayCtx.strokeRect(bx, by, bw, bh);
+        overlayCtx.fillText(`CV${i+1}`, bx+3, by-4);
+      });
+      overlayCtx.setLineDash([]);
+      overlayCtx.restore();
+    }
+
+    if(!mfl||!mfl.length)return;
+    mfl.forEach((lm,fi)=>{
+      const primary=fi===0;
+      overlayCtx.strokeStyle=primary?'rgba(74,222,128,0.65)':'rgba(248,113,113,0.65)';
+      overlayCtx.lineWidth=0.8;
+      for(const[a,b]of CONN){
+        if(!lm[a]||!lm[b])continue;
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(lm[a].x*W,lm[a].y*H);
+        overlayCtx.lineTo(lm[b].x*W,lm[b].y*H);
+        overlayCtx.stroke();
+      }
+      overlayCtx.fillStyle=primary?'rgba(59,130,246,0.5)':'rgba(248,113,113,0.5)';
+      for(let i=0;i<lm.length;i+=5){
+        overlayCtx.beginPath();
+        overlayCtx.arc(lm[i].x*W,lm[i].y*H,1.2,0,Math.PI*2);
+        overlayCtx.fill();
+      }
+      if(lm.length>=478){
+        const iris=(s,e)=>{
+          const pts=lm.slice(s,e);
+          const cx=pts.reduce((a,p)=>a+p.x,0)/pts.length*W;
+          const cy=pts.reduce((a,p)=>a+p.y,0)/pts.length*H;
+          const r=Math.abs(pts[0].x-pts[2].x)*W*0.5||4;
+          overlayCtx.strokeStyle='rgba(34,211,238,0.85)';
+          overlayCtx.lineWidth=1.5;
+          overlayCtx.beginPath();
+          overlayCtx.arc(cx,cy,r,0,Math.PI*2);
+          overlayCtx.stroke();
+        };
+        iris(468,473); iris(473,478);
+      }
+      if(!primary){
+        const nose=lm[1];
+        overlayCtx.fillStyle='#f87171';
+        overlayCtx.font='bold 11px monospace';
+        overlayCtx.fillText('⚠ EXTRA FACE',nose.x*W-40,nose.y*H-20);
+      }
+    });
+  }
+
+  function onResults(results){
+    const lmList=results.multiFaceLandmarks||[];
+    // Sync overlay canvas to display size
+    const rect=video.getBoundingClientRect();
+    if(rect.width>0&&overlayCanvas.width!==Math.round(rect.width)){
+      overlayCanvas.width=Math.round(rect.width);
+      overlayCanvas.height=Math.round(rect.height);
+    }
+    drawOverlay(lmList);
+
+    if(lmList.length===0){
+      streak.noFace++;
+      emit('faceStatus',{count:0});
+      emit('badge',{face:streak.noFace>3?'danger':'warn'});
+      emit('lmCount',0);
+      if(!warmingUp()&&streak.noFace>=CFG.streakNeeded&&canAlert('noFace')){
+        counts.noFace++;
+        emit('violation',{type:'noFace',level:'danger',msg:'No face detected! Please keep your face visible to the camera.'});
+      }
+      return;
+    }
+    streak.noFace=0;
+    emit('lmCount',lmList[0].length);
+
+    if(lmList.length>1){
+      streak.multiFace++;
+      emit('faceStatus',{count:lmList.length});
+      if(streak.multiFace>=CFG.streakNeeded&&canAlert('multiFace')){
+        counts.multiFace++;
+        emit('violation',{type:'multiFace',level:'danger',msg:`${lmList.length} faces detected! Only the candidate is allowed.`});
+      }
+      emit('badge',{face:'danger'});
+    } else {
+      streak.multiFace=0;
+      emit('faceStatus',{count:1});
+      emit('badge',{face:'ok'});
+    }
+
+    const lm=lmList[0];
+    const pose=estimateHeadPose(lm);
+    const headBad=Math.abs(pose.yaw)>CFG.headYawLimit||Math.abs(pose.pitch)>CFG.headPitchLimit;
+    if(headBad){
+      streak.headTurn++;
+      emit('badge',{head:'warn'});
+      if(streak.headTurn>=CFG.streakNeeded&&canAlert('headTurn')){
+        counts.headTurn++;
+        const dir=Math.abs(pose.yaw)>Math.abs(pose.pitch)?(pose.yaw>0?'left':'right'):(pose.pitch>0?'down':'up');
+        emit('violation',{type:'headTurn',level:'warning',msg:`Head turned ${dir}. Please face the screen directly.`});
+      }
+    } else {
+      streak.headTurn=0;
+      emit('badge',{head:'ok'});
+    }
+
+    const gaze=estimateGaze(lm);
+    const gazeBad=Math.abs(gaze.gazeX)>CFG.gazeDeviationLimit||Math.abs(gaze.gazeY)>CFG.gazeDeviationLimit*1.5;
+    if(gazeBad){
+      streak.gazeAway++;
+      emit('badge',{gaze:'warn'});
+      if(streak.gazeAway>=CFG.streakNeeded&&canAlert('gaze')){
+        counts.lookAway++;
+        const dir=Math.abs(gaze.gazeX)>Math.abs(gaze.gazeY)?(gaze.gazeX>0?'right':'left'):(gaze.gazeY>0?'down':'up');
+        emit('violation',{type:'gaze',level:'warning',msg:`Gaze directed ${dir} — please look at the screen.`});
+      }
+    } else {
+      streak.gazeAway=0;
+      emit('badge',{gaze:'ok'});
+    }
+
+    const upperLip=lm[13], lowerLip=lm[14];
+    const lipDist=Math.abs(lowerLip.y-upperLip.y);
+    if(lipDist>0.045&&canAlert('talking')){
+      counts.talking++;
+      emit('violation',{type:'talking',level:'warning',msg:'Lip movement / talking detected during exam.'});
+    }
+
+    const brightness=measureBrightness();
+    emit('brightness',brightness);
+    emit('status',{pose,gaze,counts,brightness});
+  }
+
+  function renderLoop(now){
+    if(!running)return;
+    rafId=requestAnimationFrame(renderLoop);
+    const interval=1000/CFG.detectionFps;
+    if(now-lastDetTime<interval)return;
+    if(!video||video.readyState<2)return;
+    lastDetTime=now;
+    try{
+      const src=preprocess();
+      faceMesh.send({image:src});
+    }catch(e){
+      console.warn('[Proctor] send error:',e);
+    }
+  }
+
+  async function startNoise(stream){
+    try{
+      audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+      const src=audioCtx.createMediaStreamSource(stream);
+      analyser=audioCtx.createAnalyser();
+      analyser.fftSize=256;
+      src.connect(analyser);
+      const buf=new Uint8Array(analyser.frequencyBinCount);
+      noiseLoop=setInterval(()=>{
+        analyser.getByteFrequencyData(buf);
+        const avg=buf.reduce((a,b)=>a+b,0)/buf.length;
+        const db=Math.round(avg*90/255);
+        emit('noise',db);
+        if(db>CFG.noiseThresholdDb&&canAlert('noise')){
+          counts.noise++;
+          emit('violation',{type:'noise',level:'warning',msg:`Excessive noise detected (${db} dB). Please stay quiet.`});
+        }
+      },200);
+    }catch(e){
+      emit('log',{type:'info',msg:'Noise monitoring unavailable: '+e.message});
+    }
+  }
+
+  async function init(videoEl,canvasEl){
+    video=videoEl;
+    overlayCanvas=canvasEl;
+    overlayCtx=canvasEl.getContext('2d');
+    offCanvas=document.createElement('canvas');
+    offCtx=offCanvas.getContext('2d',{willReadFrequently:true});
+    offCanvas.style.display='none';
+    document.body.appendChild(offCanvas);
+    // Kick off OpenCV init (non-blocking — MediaPipe proceeds regardless)
+    initOpenCV().catch(e=>console.warn('[OpenCV] init error:', e));
+  }
+
+  async function loadModels(onProgress){
+    onProgress(5,'Initialising MediaPipe FaceMesh…');
+
+    // ✅ Use CDN locateFile — this is how MediaPipe should be loaded
+    faceMesh=new FaceMesh({
+      locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+
+    faceMesh.setOptions({
+      maxNumFaces:CFG.maxNumFaces,
+      refineLandmarks:CFG.refineLandmarks,
+      minDetectionConfidence:CFG.minDetectionConf,
+      minTrackingConfidence:CFG.minTrackingConf,
+    });
+
+    onProgress(30,'Downloading FaceMesh WASM + TFLite models…');
+
+    // Warm-up: send a blank canvas — triggers async WASM compilation & model load
+    await new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>reject(new Error('Model load timeout (30s). Check your internet connection.')),30000);
+      faceMesh.onResults(()=>{clearTimeout(timeout);resolve();});
+      const dummy=document.createElement('canvas');
+      dummy.width=dummy.height=64;
+      dummy.getContext('2d').fillRect(0,0,64,64);
+      faceMesh.send({image:dummy}).catch(reject);
+    });
+
+    faceMesh.onResults(onResults); // restore real callback
+    onProgress(100,'MediaPipe ready! Starting camera…');
+  }
+
+  async function start(stream){
+    video.srcObject=stream;
+    await new Promise(r=>{video.onloadedmetadata=()=>video.play().then(r).catch(r);});
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    overlayCanvas.width=video.videoWidth||320;
+    overlayCanvas.height=video.videoHeight||240;
+    startedAt=Date.now();
+    running=true;
+    await startNoise(stream);
+    requestAnimationFrame(renderLoop);
+  }
+
+  function stop(){
+    running=false;
+    if(rafId)cancelAnimationFrame(rafId);
+    clearInterval(noiseLoop);
+    if(audioCtx)audioCtx.close();
+    if(faceMesh)faceMesh.close();
+    if(offCanvas?.parentNode)offCanvas.parentNode.removeChild(offCanvas);
+    if(video?.srcObject)video.srcObject.getTracks().forEach(t=>t.stop());
+    // Clean up OpenCV Mats to free WASM heap memory
+    try{
+      if(cvSrcMat){cvSrcMat.delete();cvSrcMat=null;}
+      if(cvDstMat){cvDstMat.delete();cvDstMat=null;}
+      if(cvBlurMat){cvBlurMat.delete();cvBlurMat=null;}
+      if(cvFaceClassifier){cvFaceClassifier.delete();cvFaceClassifier=null;}
+    }catch(e){}
+  }
+
+  function on(ev,fn){callbacks[ev]=fn;}
+  function getCounts(){return{...counts};}
+
+  return{init,loadModels,start,stop,on,getCounts};
+})();
+
+/* ═══════════════════════════════════════════
+   APP LOGIC
+═══════════════════════════════════════════ */
+let currentQ=0;
+let answers=new Array(QUESTIONS.length).fill(null);
+let logEntries=[];
+let timerInterval=null;
+let secondsLeft=59*60;
+let examStartTime=null;
+let violationTotal=0;
+let candidate={};
+
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id)?.classList.add('active');
+}
+
+function setProgress(pct,msg,detail=''){
+  document.getElementById('progress-fill').style.width=pct+'%';
+  document.getElementById('load-msg').textContent=msg;
+  document.getElementById('load-detail').textContent=detail;
+}
+
+async function startExam(){
+  const name=document.getElementById('candidate-name').value.trim();
+  const examId=document.getElementById('exam-id').value.trim();
+  if(!name||!examId){
+    const b=document.getElementById('err-banner');
+    b.style.display='block';
+    b.textContent='⚠️ Please enter your name and Exam ID before continuing.';
+    return;
+  }
+  candidate={name,examId};
+  showScreen('loading-screen');
+
+  try{
+    setProgress(5,'Requesting camera & microphone…','');
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:1280},height:{ideal:720},facingMode:'user',frameRate:{ideal:30}},
+      audio:true,
+    });
+
+    setProgress(12,'Camera ready. Loading AI models…','MediaPipe FaceMesh · OpenCV.js preprocessing');
+
+    const video=document.getElementById('video');
+    const canvas=document.getElementById('overlay');
+    await Proctor.init(video,canvas);
+    registerCallbacks();
+
+    await Proctor.loadModels((pct,msg)=>setProgress(pct,msg,''));
+
+    setProgress(100,'Starting exam…','');
+    await Proctor.start(stream);
+
+  }catch(e){
+    console.error(e);
+    showScreen('setup-screen');
+    const b=document.getElementById('err-banner');
+    b.style.display='block';
+    b.textContent='❌ Could not start: '+e.message+'. Make sure you allow camera & microphone access, and that you have an internet connection (models load from CDN).';
+    return;
+  }
+
+  examStartTime=new Date();
+  document.getElementById('tb-name').textContent=candidate.name;
+  document.getElementById('tb-exam').textContent=candidate.examId;
+  loadQuestion(0);
+  buildDots();
+  startTimer();
+  showScreen('exam-screen');
+  addLog('info','🚀','Exam started — MediaPipe FaceMesh + OpenCV.js proctoring active');
+}
+
+function registerCallbacks(){
+  Proctor.on('violation',({type,level,msg})=>{
+    violationTotal++;
+    updateStats(); updateRisk();
+    addLog(level==='danger'?'danger':'warning',level==='danger'?'🚨':'⚠️',msg);
+    showAlert(level==='danger'?'🚨':'⚠️',level==='danger'?'Critical Violation':'Warning',msg);
+    const c=Proctor.getCounts();
+    document.getElementById('ms-away').textContent=c.lookAway+c.headTurn;
+    document.getElementById('ms-noise').textContent=c.noise;
+  });
+
+  Proctor.on('faceStatus',({count})=>{
+    document.getElementById('ms-faces').textContent=count;
+  });
+
+  Proctor.on('lmCount',n=>{
+    const el=document.getElementById('pill-lm');
+    el.textContent=`● ${n} pts`;
+    el.className=`pill ${n>0?'ok':'dim'}`;
+  });
+
+  Proctor.on('badge',updates=>{
+    const labels={
+      face:{ok:'✔ Face OK',warn:'⚠ No Face',danger:'🚨 No Face!'},
+      head:{ok:'📐 Head OK',warn:'📐 Head Turned',danger:'📐 Head Away'},
+      gaze:{ok:'👀 Gaze OK',warn:'👀 Gaze Away',danger:'👀 Off Screen'},
+    };
+    for(const[key,status]of Object.entries(updates)){
+      const el=document.getElementById(`pill-${key}`);
+      if(el){el.className=`pill ${status}`;el.textContent=labels[key]?.[status]||status;}
+    }
+  });
+
+  Proctor.on('noise',db=>{
+    const pct=Math.min(100,db/90*100);
+    const fill=document.getElementById('noise-bar');
+    fill.style.width=pct+'%';
+    fill.style.background=db>70?'#f87171':db>55?'#fbbf24':'#4ade80';
+    document.getElementById('noise-db').textContent=db+' dB';
+  });
+
+  Proctor.on('brightness',lum=>{
+    const adv=document.getElementById('light-advisory');
+    if(lum<50)adv.classList.remove('hidden');
+    else adv.classList.add('hidden');
+  });
+
+  Proctor.on('log',({type,msg})=>{
+    addLog(type,'ℹ️',msg);
+    // Update OpenCV pill status based on log messages
+    const pill=document.getElementById('pill-cv');
+    if(msg.includes('OpenCV.js ready'))         {pill.className='pill ok';  pill.textContent='🔬 CV: Preprocess';}
+    if(msg.includes('Haar cascade loaded'))     {pill.className='pill ok';  pill.textContent='🔬 CV: Bbox+Pre';}
+    if(msg.includes('Haar not loaded'))         {pill.className='pill warn'; pill.textContent='🔬 CV: Preprocess';}
+  });
+}
+
+function updateRisk(){
+  const b=document.getElementById('risk-badge');
+  if(violationTotal>=10){b.textContent='HIGH';b.className='rbadge high';}
+  else if(violationTotal>=4){b.textContent='MEDIUM';b.className='rbadge medium';}
+  else{b.textContent='LOW';b.className='rbadge low';}
+}
+function updateStats(){document.getElementById('ms-viol').textContent=violationTotal;}
+
+// Alert queue
+const alertQ=[];
+let alertOpen=false;
+function showAlert(ico,title,msg){alertQ.push({ico,title,msg});if(!alertOpen)nextAlert();}
+function nextAlert(){
+  if(!alertQ.length){alertOpen=false;return;}
+  alertOpen=true;
+  const{ico,title,msg}=alertQ.shift();
+  document.getElementById('alert-ico').textContent=ico;
+  document.getElementById('alert-title').textContent=title;
+  document.getElementById('alert-msg').textContent=msg;
+  document.getElementById('alert-overlay').classList.remove('hidden');
+}
+function dismissAlert(){
+  document.getElementById('alert-overlay').classList.add('hidden');
+  setTimeout(nextAlert,350);
+}
+
+function addLog(type,icon,msg){
+  const time=new Date().toLocaleTimeString('en-GB');
+  logEntries.push({type,icon,msg,time});
+  const body=document.getElementById('log');
+  const el=document.createElement('div');
+  el.className=`log-item ${type}`;
+  el.innerHTML=`<span class="log-ico">${icon}</span><div style="flex:1"><div class="log-msg">${msg}</div><div class="log-time">${time}</div></div>`;
+  body.appendChild(el);
+  body.scrollTop=body.scrollHeight;
+  document.getElementById('log-cnt').textContent=logEntries.length;
+}
+
+function startTimer(){
+  timerInterval=setInterval(()=>{
+    secondsLeft--;
+    const m=String(Math.floor(secondsLeft/60)).padStart(2,'0');
+    const s=String(secondsLeft%60).padStart(2,'0');
+    const el=document.getElementById('timer');
+    el.textContent=`${m}:${s}`;
+    if(secondsLeft<=300)el.style.color='#fbbf24';
+    if(secondsLeft<=60)el.style.color='#f87171';
+    if(secondsLeft<=0)endExam();
+  },1000);
+}
+
+function loadQuestion(idx){
+  currentQ=idx;
+  const q=QUESTIONS[idx];
+  const letters=['A','B','C','D','E'];
+  document.getElementById('q-num').textContent=`Q ${idx+1} / ${QUESTIONS.length}`;
+  document.getElementById('q-topic-tag').textContent=q.topic;
+  document.getElementById('q-text').textContent=q.text;
+  const opts=document.getElementById('options');
+  opts.innerHTML='';
+  q.options.forEach((opt,i)=>{
+    const btn=document.createElement('button');
+    btn.className='opt'+(answers[idx]===i?' selected':'');
+    btn.innerHTML=`<span class="opt-ltr">${letters[i]}</span>${opt}`;
+    btn.onclick=()=>{answers[idx]=i;loadQuestion(idx);addLog('info','✏️',`Q${idx+1} answered`);};
+    opts.appendChild(btn);
+  });
+  updateDots();
+}
+
+function prevQ(){if(currentQ>0)loadQuestion(currentQ-1);}
+function nextQ(){if(currentQ<QUESTIONS.length-1)loadQuestion(currentQ+1);}
+
+function buildDots(){
+  const row=document.getElementById('q-dots');
+  row.innerHTML='';
+  QUESTIONS.forEach((_,i)=>{
+    const d=document.createElement('span');
+    d.className='qdot';
+    d.onclick=()=>loadQuestion(i);
+    row.appendChild(d);
+  });
+  updateDots();
+}
+function updateDots(){
+  document.querySelectorAll('.qdot').forEach((d,i)=>{
+    d.className='qdot'+(i===currentQ?' cur':answers[i]!==null?' done':'');
+  });
+}
+
+function endExam(){
+  if(!examStartTime)return;
+  clearInterval(timerInterval);
+  Proctor.stop();
+  addLog('info','🏁','Exam ended.');
+  buildReport();
+  showScreen('report-screen');
+}
+
+function buildReport(){
+  const endTime=new Date();
+  const durSecs=Math.floor((endTime-examStartTime)/1000);
+  const c=Proctor.getCounts();
+  const answered=answers.filter(a=>a!==null).length;
+  const correct=answers.filter((a,i)=>a===QUESTIONS[i].answer).length;
+  const score=Math.round(correct/QUESTIONS.length*100);
+  const risk=violationTotal>=10?'HIGH':violationTotal>=4?'MEDIUM':'LOW';
+  const verdict=violationTotal>=10?'flagged':violationTotal>=4?'moderate':'clean';
+  const vText={
+    clean:'✅ CLEAN — No significant malpractice detected.',
+    moderate:'⚠️ MODERATE RISK — Review flagged events.',
+    flagged:'🚨 FLAGGED — High violation count. Manual review required.'
+  }[verdict];
+  const vlogs=logEntries.filter(e=>e.type!=='info')
+    .map(e=>`<div class="${e.type==='danger'?'md':'mw'}">[${e.time}] ${e.msg}</div>`)
+    .join('')||'<div>No violations recorded.</div>';
+
+  document.getElementById('report-body').innerHTML=`
+    <div class="r-section">
+      <h4>Candidate</h4>
+      <div class="r-row"><span class="lbl">Name</span><span class="val">${candidate.name}</span></div>
+      <div class="r-row"><span class="lbl">Exam ID</span><span class="val">${candidate.examId}</span></div>
+      <div class="r-row"><span class="lbl">Date</span><span class="val">${examStartTime.toLocaleDateString()}</span></div>
+      <div class="r-row"><span class="lbl">Start</span><span class="val">${examStartTime.toLocaleTimeString()}</span></div>
+      <div class="r-row"><span class="lbl">Duration</span><span class="val">${Math.floor(durSecs/60)}m ${durSecs%60}s</span></div>
+    </div>
+    <div class="r-section">
+      <h4>Score</h4>
+      <div class="r-row"><span class="lbl">Answered</span><span class="val">${answered}/${QUESTIONS.length}</span></div>
+      <div class="r-row"><span class="lbl">Correct</span><span class="val ${score>=60?'ok':'danger'}">${correct}/${QUESTIONS.length}</span></div>
+      <div class="r-row"><span class="lbl">Score</span><span class="val ${score>=60?'ok':'danger'}">${score}%</span></div>
+    </div>
+    <div class="r-section">
+      <h4>Proctoring Summary</h4>
+      <div class="r-row"><span class="lbl">Engine</span><span class="val">MediaPipe FaceMesh + OpenCV.js</span></div>
+      <div class="r-row"><span class="lbl">Risk Level</span><span class="val ${risk==='LOW'?'ok':risk==='MEDIUM'?'warn':'danger'}">${risk}</span></div>
+      <div class="r-row"><span class="lbl">Total Violations</span><span class="val ${violationTotal>0?(violationTotal>=4?'danger':'warn'):'ok'}">${violationTotal}</span></div>
+      <div class="r-row"><span class="lbl">No-Face Events</span><span class="val">${c.noFace}</span></div>
+      <div class="r-row"><span class="lbl">Multiple Persons</span><span class="val">${c.multiFace}</span></div>
+      <div class="r-row"><span class="lbl">Gaze Off-Screen</span><span class="val">${c.lookAway}</span></div>
+      <div class="r-row"><span class="lbl">Head Turns</span><span class="val">${c.headTurn}</span></div>
+      <div class="r-row"><span class="lbl">Noise Alerts</span><span class="val">${c.noise}</span></div>
+      <div class="r-row"><span class="lbl">Talking Events</span><span class="val">${c.talking}</span></div>
+    </div>
+    <div class="verdict ${verdict}">${vText}</div>
+    <div class="r-section"><h4>Violation Log</h4><div class="mini-vlog">${vlogs}</div></div>`;
+}
+
+function downloadReport(){
+  const c=Proctor.getCounts();
+  const lines=[
+    '=== SecureExam v2 Proctoring Report ===',
+    `Engine     : MediaPipe FaceMesh + OpenCV.js (preprocessing + Haar bbox)`,
+    `Candidate  : ${candidate.name}`,
+    `Exam ID    : ${candidate.examId}`,
+    `Date       : ${examStartTime?.toLocaleDateString()}`,
+    `Start Time : ${examStartTime?.toLocaleTimeString()}`,
+    '',
+    '--- Violations ---',
+    `Total      : ${violationTotal}`,
+    `No Face    : ${c.noFace}`,
+    `Multi-Face : ${c.multiFace}`,
+    `Gaze Away  : ${c.lookAway}`,
+    `Head Turns : ${c.headTurn}`,
+    `Noise      : ${c.noise}`,
+    `Talking    : ${c.talking}`,
+    '',
+    '--- Event Log ---',
+    ...logEntries.map(e=>`[${e.time}] [${e.type.toUpperCase()}] ${e.msg}`)
+  ];
+  const blob=new Blob([lines.join('\n')],{type:'text/plain'});
+  const a=Object.assign(document.createElement('a'),{
+    href:URL.createObjectURL(blob),
+    download:`ProctorReport_${candidate.examId}_${Date.now()}.txt`,
+  });
+  a.click();
+}
+
+// ── Anti-cheat browser events ──
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&examStartTime){
+    violationTotal++;
+    updateStats();updateRisk();
+    addLog('danger','🚨','Tab switched / window minimised!');
+    showAlert('🚨','Tab Switch Detected','Switching tabs during the exam is a violation and has been recorded.');
+  }
+});
+document.addEventListener('contextmenu',e=>{if(examStartTime)e.preventDefault();});
+document.addEventListener('copy',()=>{if(examStartTime)addLog('warning','⚠️','Copy attempt detected.');});
+document.addEventListener('paste',()=>{if(examStartTime)addLog('warning','⚠️','Paste attempt detected.');});
+document.addEventListener('keydown',e=>{
+  if(!examStartTime)return;
+  if(e.key==='PrintScreen')addLog('danger','🚨','Screenshot key detected!');
+  if(e.ctrlKey&&['c','v','a','s','p'].includes(e.key))addLog('warning','⚠️',`Ctrl+${e.key.toUpperCase()} detected.`);
+});
+</script>
+</body>
+</html>
